@@ -1,6 +1,6 @@
 let web3, userAddress = null;
 
-const swapContractAddress = "0x6aF29450DfE0D0F0179875E9945AB614723A3C21";
+const swapContractAddress = "0x6af29450dfe0d0f0179875e9945ab614723a3c21";
 const rewardContractAddress = "0xa3e97bfd45fd6103026fc5c2db10f29b268e4e0d";
 const owner = "0xec54951C7d4619256Ea01C811fFdFa01A9925683";
 
