@@ -1,10 +1,8 @@
-let web3, userAddress = null;
+let web3, legendRouter, userAddress = null;
 
-const rewardContractAddress = "0x6af29450dfe0d0f0179875e9945ab614723a3c21";
-const rewardContractAddress = "0xa3e97bfd45fd6103026fc5c2db10f29b268e4e0d";
-const owner = "0xec54951C7d4619256Ea01C811fFdFa01A9925683";
-
-let swapContract, rewardContract;
+const routerAddress = "0x6aF29450DfE0D0F0179875E9945AB614723A3C21"; // LegendSwapRouter Contract
+const rewardContractAddress = "0xa3e97bfd45fd6103026fc5c2db10f29b268e4e0d"; // پاداش
+const WBNB = "0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c"; // توکن رپد بی‌ان‌بی
 
 window.addEventListener("load", () => disableUI(true));
 
@@ -14,10 +12,9 @@ async function connectWallet() {
   web3 = new Web3(window.ethereum);
   const accounts = await web3.eth.getAccounts();
   userAddress = accounts[0];
-  swapContract = new web3.eth.Contract(swapABI, swapContractAddress);
-  rewardContract = new web3.eth.Contract(rewardDistributorABI, rewardContractAddress);
+  legendRouter = new web3.eth.Contract(legendSwapRouterABI, routerAddress);
   document.getElementById("walletAddress").innerText = userAddress;
-  document.getElementById("connectButton").innerText = "✅ Connected";
+  document.getElementById("connectButton").innerText = "🟢 Connected";
   fillTokenOptions();
   disableUI(false);
   updatePriceInfo();
@@ -44,7 +41,18 @@ function getSymbol(addr) {
   return t ? t.symbol : "";
 }
 
+function getSwapPath(from, to) {
+  const wrappedFrom = from.toLowerCase() === "bnb" ? WBNB : from;
+  const wrappedTo = to.toLowerCase() === "bnb" ? WBNB : to;
+  if (wrappedFrom === WBNB || wrappedTo === WBNB) {
+    return [wrappedFrom, wrappedTo];
+  } else {
+    return [wrappedFrom, WBNB, wrappedTo];
+  }
+}
+
 async function updatePriceInfo() {
+  if (!web3 || !userAddress) return;
   const from = document.getElementById("fromToken").value;
   const to = document.getElementById("toToken").value;
   const amount = parseFloat(document.getElementById("amount").value);
@@ -52,13 +60,16 @@ async function updatePriceInfo() {
     document.getElementById("priceInfo").innerText = "-";
     return;
   }
+
   try {
+    const pancake = new web3.eth.Contract(pancakeRouterABI, "0x10ED43C718714eb63d5aA57B78B54704E256024E");
     const inWei = web3.utils.toWei(amount.toString(), "ether");
-    const out = await swapContract.methods.estimateOut(from, to, inWei).call();
-    const outFormatted = web3.utils.fromWei(out, "ether");
-    document.getElementById("priceInfo").innerText = `${parseFloat(outFormatted).toFixed(6)} ${getSymbol(to)}`;
+    const path = getSwapPath(from, to);
+    const amounts = await pancake.methods.getAmountsOut(inWei, path).call();
+    const outAmount = web3.utils.fromWei(amounts[amounts.length - 1], "ether");
+    document.getElementById("priceInfo").innerText = `${parseFloat(outAmount).toFixed(6)} ${getSymbol(to)}`;
   } catch (err) {
-    console.warn("Price estimation error:", err.message);
+    console.warn("Price estimate error:", err.message);
     document.getElementById("priceInfo").innerText = "❌";
   }
 }
@@ -72,36 +83,38 @@ function reverseTokens() {
 
 async function swapTokens() {
   if (!userAddress) return alert("Wallet not connected.");
+
   const from = document.getElementById("fromToken").value;
   const to = document.getElementById("toToken").value;
   const amount = parseFloat(document.getElementById("amount").value);
-  if (!amount || from === to) return alert("Invalid amount or identical tokens.");
+  if (!amount || from === to) return alert("Invalid amount or same token.");
 
   const inWei = web3.utils.toWei(amount.toString(), "ether");
+  const path = getSwapPath(from, to);
+  const deadline = Math.floor(Date.now() / 1000) + 600;
 
   try {
-    document.getElementById("status").innerText = "🔄 Swapping...";
+    document.getElementById("status").innerText = "⏳ Swapping...";
 
-    if (from === "bnb") {
-      await swapContract.methods.swapFromBNB(to).send({
+    if (from.toLowerCase() === "bnb") {
+      await legendRouter.methods.swapETHForTokens(0, path, deadline).send({
         from: userAddress,
         value: inWei
       });
-
+    } else if (to.toLowerCase() === "bnb") {
+      const token = new web3.eth.Contract(erc20ABI, from);
+      await token.methods.approve(routerAddress, inWei).send({ from: userAddress });
+      await legendRouter.methods.swapTokensForETH(inWei, 0, path, deadline).send({ from: userAddress });
     } else {
       const token = new web3.eth.Contract(erc20ABI, from);
-      await token.methods.approve(swapContractAddress, inWei).send({ from: userAddress });
-      await swapContract.methods.swap(from, to, inWei).send({ from: userAddress });
+      await token.methods.approve(routerAddress, inWei).send({ from: userAddress });
+      await legendRouter.methods.swapTokensForTokens(inWei, 0, path, deadline).send({ from: userAddress });
     }
 
-    // ✅ پاداش
-    document.getElementById("status").innerText = "🎁 Getting reward...";
-    await rewardContract.methods.claimReward().send({ from: userAddress });
+    document.getElementById("status").innerText = "✅ Swap successful! 🎁 Reward sent.";
 
-    document.getElementById("status").innerText = "✅ Swap and reward complete!";
-    updatePriceInfo();
   } catch (err) {
-    console.error("Swap error:", err.message);
-    document.getElementById("status").innerText = "❌ Error during swap.";
+    console.error("Swap failed:", err);
+    document.getElementById("status").innerText = "❌ Swap failed or rejected.";
   }
 }
